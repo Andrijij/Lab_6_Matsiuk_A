@@ -17,28 +17,34 @@ def createBody(x, y, shape, *shapeArgs):
     space.add(body, s)
     return s
 
-s0 = createBody(300, 300, pymunk.Poly, ((-20, -5), (-20, 5), (20, 15), (20, -15)))
+s0 = createBody(300, 300, pymunk.Poly, ((-20,-5),(-20,5),(20,15),(20,-15)))
 s0.score = 0
-s3 = createBody(200, 300, pymunk.Poly, ((-20, -5), (-20, 5), (20, 15), (20, -15)))
+s3 = createBody(200, 300, pymunk.Poly, ((-20,-5),(-20,5),(20,15),(20,-15)))
 s3.color = (0, 255, 0, 255)
 s3.score = 0
-s3.body.Q = [[0, 0], [0, 0], [0, 0]]
-s3.body.action = 0  # 0 - залишати, 1 - змінювати
-s1 = createBody(300, 200, pymunk.Circle, 10, (0, 0))
+s3.body.Q = np.zeros((3, 2))  # 3 стани (нічого, об'єкт, антиоб'єкт), 2 дії (залишити або змінити)
+
+s3.body.action = 0  # 0 - залишити, 1 - змінити
+s1 = createBody(300, 200, pymunk.Circle, 10, (0,0))
 S2 = []
 for i in range(1):
-    s2 = createBody(350, 250, pymunk.Circle, 10, (0, 0))
+    s2 = createBody(350, 250, pymunk.Circle, 10, (0,0))
     s2.color = (255, 0, 0, 255)
     S2.append(s2)
 
+# Параметри для навчання
+alpha = 0.1  # Коефіцієнт навчання
+gamma = 0.9  # Фактор знижки
+epsilon = 0.1  # Ймовірність випадкової дії (ε-жадібний алгоритм)
+
 def getAngle(x, y, x1, y1):
-    return math.atan2(y1 - y, x1 - x)
+    return math.atan2(y1-y, x1-x)
 
 def getDist(x, y, x1, y1):
-    return ((x - x1) ** 2 + (y - y1) ** 2) ** 0.5
+    return ((x-x1)**2 + (y-y1)**2)**0.5
 
 def inCircle(x, y, cx, cy, R):
-    return (x - cx) ** 2 + (y - cy) ** 2 < R ** 2
+    return (x - cx)**2 + (y - cy)**2 < R**2
 
 def inSector(x, y, cx, cy, R, a):
     angle = getAngle(cx, cy, x, y)
@@ -46,55 +52,48 @@ def inSector(x, y, cx, cy, R, a):
     angle = angle % (2 * math.pi)
     return inCircle(x, y, cx, cy, R) and a - 0.5 < angle < a + 0.5
 
-# Оновлена функція стратегії робота
 def strategy2(b=s3.body):
-    """Модифікована стратегія робота з використанням Q-learning, дисконтуванням винагород і epsilon-greedy стратегією."""
-    v = 100  # початкова швидкість
+    v = 100
     a = b.angle
     b.velocity = v * math.cos(a), v * math.sin(a)
     x, y = b.position
     R = getDist(x, y, 350, 250)
-
+    
+    # Малювання сектора огляду
     ellipse(x, y, 200, 200, stroke=Color(0.5))
     line(x, y, x + 100 * math.cos(a + 0.5), y + 100 * math.sin(a + 0.5), stroke=Color(0.5))
     line(x, y, x + 100 * math.cos(a - 0.5), y + 100 * math.sin(a - 0.5), stroke=Color(0.5))
 
-    # Коефіцієнти для Q-learning
-    gamma = 0.9  # коефіцієнт дисконтування
-    alpha = 0.1  # швидкість навчання
-    epsilon = max(0.01, 1 - canvas.frame / 1000)  # зменшується з часом
-
     if canvas.frame % 10 == 0:  # кожні 10 кадрів
-        # Перевіряємо, чи об'єкт у секторі огляду
         inS = inSector(s1.body.position[0], s1.body.position[1], x, y, 100, a)
         inS2 = inSector(S2[0].body.position[0], S2[0].body.position[1], x, y, 100, a)
 
         # Установлюємо стан і винагороду
         if inS:
             state = 1
-            distance_to_target = getDist(x, y, s1.body.position[0], s1.body.position[1])
-            reward = 1 / (distance_to_target + 1)  # динамічна винагорода за близькість до цілі
+            reward = 1 if b.action == 0 else -1
         elif inS2:
             state = 2
-            reward = -1  # негативна винагорода за знаходження перешкоди
+            reward = -1 if b.action == 0 else 1
         else:
             state = 0
             reward = 0
 
-        # Оновлюємо Q-таблицю з врахуванням винагороди та дисконтування
+        # Оновлюємо Q-таблицю
         b.Q[state][b.action] += alpha * (reward + gamma * np.max(b.Q[state]) - b.Q[state][b.action])
+        print(f"Стан: {state}, Дія: {b.action}, Q-таблиця: {b.Q}")
 
-        # Вибір дії на основі epsilon-greedy стратегії
-        if random.random() < epsilon:
-            b.action = random.choice([0, 1])  # випадково вибираємо дію
-        else:
-            b.action = np.argmax(b.Q[state])  # вибираємо оптимальну дію
+        # Вибираємо дію на основі ε-жадібного алгоритму
+        if random.random() < epsilon:  # Випадкова дія
+            b.action = random.choice([0, 1])
+        else:  # Оптимальна дія
+            b.action = np.argmax(b.Q[state])
 
-        # Виконання обраної дії
-        if b.action == 1:  # змінюємо напрямок
+        # Якщо змінювати напрямок
+        if b.action == 1:
             b.angle = 2 * math.pi * random.random()
 
-        # Запобігаємо виходу за межі
+        # Запобігаємо виїзду за межі кола
         if R > 180:
             b.angle = getAngle(x, y, 350, 250)
 
@@ -104,9 +103,9 @@ def scr(s, s0, s3, p=1):
     s3x, s3y = s3.body.position
     if not inCircle(bx, by, 350, 250, 180):
         if getDist(bx, by, s0x, s0y) < getDist(bx, by, s3x, s3y):
-            s0.score = s0.score + p
+            s0.score += p
         else:
-            s3.score = s3.score + p
+            s3.score += p
         s.body.position = random.randint(200, 400), random.randint(200, 300)
 
 def score():
@@ -115,8 +114,7 @@ def score():
         scr(s, s0, s3, p=-1)
 
 def manualControl():
-    """Керування роботом з мишки або клавіатури"""
-    v = 10  # швидкість
+    v = 10
     b = s0.body
     a = b.angle
     x, y = b.position
@@ -141,7 +139,7 @@ draw_options = pymunk.pyglet_util.DrawOptions()
 def draw(canvas):
     canvas.clear()
     fill(0, 0, 0, 1)
-    text("%i %i" % (s0.score, s3.score), 20, 20)
+    text(f"{s0.score} {s3.score}", 20, 20)
     nofill()
     ellipse(350, 250, 350, 350, stroke=Color(0))
     manualControl()
