@@ -1,0 +1,96 @@
+import numpy as np
+import random
+
+# Параметри для Q-Learning агента
+ACTIONS = [-0.1, 0.1]  # можливі дії для зміни кута
+ALPHA = 0.1  # швидкість навчання
+GAMMA = 0.99  # коефіцієнт дисконтування
+EPSILON = 0.1  # епсилон для epsilon-greedy політики
+
+class QLearningAgent:
+    def __init__(self, actions, alpha=0.1, gamma=0.99, epsilon=0.1):
+        self.q_table = {}
+        self.actions = actions
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon = epsilon
+    
+    def get_q_value(self, state, action):
+        return self.q_table.get((state, action), 0.0)
+    
+    def choose_action(self, state):
+        if random.random() < self.epsilon:
+            return random.choice(self.actions)
+        q_values = [self.get_q_value(state, action) for action in self.actions]
+        return self.actions[np.argmax(q_values)]
+    
+    def learn(self, state, action, reward, next_state):
+        current_q = self.get_q_value(state, action)
+        max_next_q = max([self.get_q_value(next_state, a) for a in self.actions])
+        new_q = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
+        self.q_table[(state, action)] = new_q
+
+# Ініціалізуємо агента
+agent = QLearningAgent(ACTIONS, ALPHA, GAMMA, EPSILON)
+
+def get_state(b):
+    """Функція отримання стану робота: повертає відстань та кут до цілі"""
+    x, y = b.position
+    target_x, target_y = s1.body.position
+    distance = getDist(x, y, target_x, target_y)
+    angle_to_target = getAngle(x, y, target_x, target_y) - b.angle
+    return (round(distance, 1), round(angle_to_target, 1))
+
+def reward(b):
+    """Функція винагороди: заохочує робота за наближення до цілі"""
+    x, y = b.position
+    target_x, target_y = s1.body.position
+    distance = getDist(x, y, target_x, target_y)
+    
+    if distance < 10:  # Якщо робот дуже близько до цілі
+        return 100  # Велика винагорода
+    return -distance  # Негативна винагорода пропорційна до відстані
+
+def strategy_qlearning(b=s3.body):
+    """Стратегія на основі Q-Learning для робота s3"""
+    state = get_state(b)
+    
+    # Вибір дії на основі поточного стану
+    action = agent.choose_action(state)
+    
+    # Виконання дії (зміна кута руху)
+    b.angle += action
+    
+    # Оновлюємо швидкість руху робота
+    v = 100
+    b.velocity = v * math.cos(b.angle), v * math.sin(b.angle)
+    
+    # Отримуємо наступний стан та винагороду
+    next_state = get_state(b)
+    r = reward(b)
+    
+    # Оновлюємо Q-таблицю на основі досвіду
+    agent.learn(state, action, r, next_state)
+
+    # Рух робота
+    line(b.position[0], b.position[1], *s1.body.position, stroke=Color(0))
+
+def draw(canvas):
+    """Функція відтворення сцени та оновлення симуляції"""
+    canvas.clear()
+    fill(0, 0, 0, 1)
+    text(f"{s0.score} {s3.score}", 20, 20)
+    nofill()
+    ellipse(350, 250, 350, 350, stroke=Color(0))
+    
+    manualControl()  # Ручне управління роботом
+    strategy_qlearning()  # Q-Learning стратегія для робота s3
+    score()  # Оцінка стану
+    simFriction()  # Імітація тертя
+    
+    space.step(0.02)  # Оновлення фізики
+    space.debug_draw(draw_options)
+
+# Розмір полотна та запуск симуляції
+canvas.size = 700, 500
+canvas.run(draw)
