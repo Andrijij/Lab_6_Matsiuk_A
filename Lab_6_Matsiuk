@@ -1,96 +1,155 @@
+#encoding: utf-8
+from __future__ import division
+from nodebox.graphics import *
+import pymunk
+import pymunk.pyglet_util
+import random, math
 import numpy as np
-import random
 
-# Параметри для Q-Learning агента
-ACTIONS = [-0.1, 0.1]  # можливі дії для зміни кута
-ALPHA = 0.1  # швидкість навчання
-GAMMA = 0.99  # коефіцієнт дисконтування
-EPSILON = 0.1  # епсилон для epsilon-greedy політики
+space = pymunk.Space()
 
-class QLearningAgent:
-    def __init__(self, actions, alpha=0.1, gamma=0.99, epsilon=0.1):
-        self.q_table = {}
-        self.actions = actions
-        self.alpha = alpha
-        self.gamma = gamma
-        self.epsilon = epsilon
-    
-    def get_q_value(self, state, action):
-        return self.q_table.get((state, action), 0.0)
-    
-    def choose_action(self, state):
-        if random.random() < self.epsilon:
-            return random.choice(self.actions)
-        q_values = [self.get_q_value(state, action) for action in self.actions]
-        return self.actions[np.argmax(q_values)]
-    
-    def learn(self, state, action, reward, next_state):
-        current_q = self.get_q_value(state, action)
-        max_next_q = max([self.get_q_value(next_state, a) for a in self.actions])
-        new_q = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
-        self.q_table[(state, action)] = new_q
+def createBody(x, y, shape, *shapeArgs):
+    body = pymunk.Body()
+    body.position = x, y
+    s = shape(body, *shapeArgs)
+    s.mass = 1
+    s.friction = 1
+    space.add(body, s)
+    return s
 
-# Ініціалізуємо агента
-agent = QLearningAgent(ACTIONS, ALPHA, GAMMA, EPSILON)
+s0 = createBody(300, 300, pymunk.Poly, ((-20, -5), (-20, 5), (20, 15), (20, -15)))
+s0.score = 0
+s3 = createBody(200, 300, pymunk.Poly, ((-20, -5), (-20, 5), (20, 15), (20, -15)))
+s3.color = (0, 255, 0, 255)
+s3.score = 0
+s3.body.Q = [[0, 0], [0, 0], [0, 0]]
+s3.body.action = 0  # 0 - залишати, 1 - змінювати
+s1 = createBody(300, 200, pymunk.Circle, 10, (0, 0))
+S2 = []
+for i in range(1):
+    s2 = createBody(350, 250, pymunk.Circle, 10, (0, 0))
+    s2.color = (255, 0, 0, 255)
+    S2.append(s2)
 
-def get_state(b):
-    """Функція отримання стану робота: повертає відстань та кут до цілі"""
+def getAngle(x, y, x1, y1):
+    return math.atan2(y1 - y, x1 - x)
+
+def getDist(x, y, x1, y1):
+    return ((x - x1) ** 2 + (y - y1) ** 2) ** 0.5
+
+def inCircle(x, y, cx, cy, R):
+    return (x - cx) ** 2 + (y - cy) ** 2 < R ** 2
+
+def inSector(x, y, cx, cy, R, a):
+    angle = getAngle(cx, cy, x, y)
+    a = a % (2 * math.pi)
+    angle = angle % (2 * math.pi)
+    return inCircle(x, y, cx, cy, R) and a - 0.5 < angle < a + 0.5
+
+# Оновлена функція стратегії робота
+def strategy2(b=s3.body):
+    """Модифікована стратегія робота з використанням Q-learning, дисконтуванням винагород і epsilon-greedy стратегією."""
+    v = 100  # початкова швидкість
+    a = b.angle
+    b.velocity = v * math.cos(a), v * math.sin(a)
     x, y = b.position
-    target_x, target_y = s1.body.position
-    distance = getDist(x, y, target_x, target_y)
-    angle_to_target = getAngle(x, y, target_x, target_y) - b.angle
-    return (round(distance, 1), round(angle_to_target, 1))
+    R = getDist(x, y, 350, 250)
 
-def reward(b):
-    """Функція винагороди: заохочує робота за наближення до цілі"""
+    ellipse(x, y, 200, 200, stroke=Color(0.5))
+    line(x, y, x + 100 * math.cos(a + 0.5), y + 100 * math.sin(a + 0.5), stroke=Color(0.5))
+    line(x, y, x + 100 * math.cos(a - 0.5), y + 100 * math.sin(a - 0.5), stroke=Color(0.5))
+
+    # Коефіцієнти для Q-learning
+    gamma = 0.9  # коефіцієнт дисконтування
+    alpha = 0.1  # швидкість навчання
+    epsilon = max(0.01, 1 - canvas.frame / 1000)  # зменшується з часом
+
+    if canvas.frame % 10 == 0:  # кожні 10 кадрів
+        # Перевіряємо, чи об'єкт у секторі огляду
+        inS = inSector(s1.body.position[0], s1.body.position[1], x, y, 100, a)
+        inS2 = inSector(S2[0].body.position[0], S2[0].body.position[1], x, y, 100, a)
+
+        # Установлюємо стан і винагороду
+        if inS:
+            state = 1
+            distance_to_target = getDist(x, y, s1.body.position[0], s1.body.position[1])
+            reward = 1 / (distance_to_target + 1)  # динамічна винагорода за близькість до цілі
+        elif inS2:
+            state = 2
+            reward = -1  # негативна винагорода за знаходження перешкоди
+        else:
+            state = 0
+            reward = 0
+
+        # Оновлюємо Q-таблицю з врахуванням винагороди та дисконтування
+        b.Q[state][b.action] += alpha * (reward + gamma * np.max(b.Q[state]) - b.Q[state][b.action])
+
+        # Вибір дії на основі epsilon-greedy стратегії
+        if random.random() < epsilon:
+            b.action = random.choice([0, 1])  # випадково вибираємо дію
+        else:
+            b.action = np.argmax(b.Q[state])  # вибираємо оптимальну дію
+
+        # Виконання обраної дії
+        if b.action == 1:  # змінюємо напрямок
+            b.angle = 2 * math.pi * random.random()
+
+        # Запобігаємо виходу за межі
+        if R > 180:
+            b.angle = getAngle(x, y, 350, 250)
+
+def scr(s, s0, s3, p=1):
+    bx, by = s.body.position
+    s0x, s0y = s0.body.position
+    s3x, s3y = s3.body.position
+    if not inCircle(bx, by, 350, 250, 180):
+        if getDist(bx, by, s0x, s0y) < getDist(bx, by, s3x, s3y):
+            s0.score = s0.score + p
+        else:
+            s3.score = s3.score + p
+        s.body.position = random.randint(200, 400), random.randint(200, 300)
+
+def score():
+    scr(s1, s0, s3)
+    for s in S2:
+        scr(s, s0, s3, p=-1)
+
+def manualControl():
+    """Керування роботом з мишки або клавіатури"""
+    v = 10  # швидкість
+    b = s0.body
+    a = b.angle
     x, y = b.position
-    target_x, target_y = s1.body.position
-    distance = getDist(x, y, target_x, target_y)
-    
-    if distance < 10:  # Якщо робот дуже близько до цілі
-        return 100  # Велика винагорода
-    return -distance  # Негативна винагорода пропорційна до відстані
+    vx, vy = b.velocity
+    if canvas.keys.char == "a":
+        b.angle -= 0.1
+    if canvas.keys.char == "d":
+        b.angle += 0.1
+    if canvas.keys.char == "w":
+        b.velocity = vx + v * math.cos(a), vy + v * math.sin(a)
+    if canvas.mouse.button == LEFT:
+        b.angle = getAngle(x, y, *canvas.mouse.xy)
+        b.velocity = vx + v * math.cos(a), vy + v * math.sin(a)
 
-def strategy_qlearning(b=s3.body):
-    """Стратегія на основі Q-Learning для робота s3"""
-    state = get_state(b)
-    
-    # Вибір дії на основі поточного стану
-    action = agent.choose_action(state)
-    
-    # Виконання дії (зміна кута руху)
-    b.angle += action
-    
-    # Оновлюємо швидкість руху робота
-    v = 100
-    b.velocity = v * math.cos(b.angle), v * math.sin(b.angle)
-    
-    # Отримуємо наступний стан та винагороду
-    next_state = get_state(b)
-    r = reward(b)
-    
-    # Оновлюємо Q-таблицю на основі досвіду
-    agent.learn(state, action, r, next_state)
+def simFriction():
+    for s in [s0, s1, s3] + S2:
+        s.body.velocity = s.body.velocity[0] * 0.9, s.body.velocity[1] * 0.9
+        s.body.angular_velocity = s.body.angular_velocity * 0.9
 
-    # Рух робота
-    line(b.position[0], b.position[1], *s1.body.position, stroke=Color(0))
+draw_options = pymunk.pyglet_util.DrawOptions()
 
 def draw(canvas):
-    """Функція відтворення сцени та оновлення симуляції"""
     canvas.clear()
     fill(0, 0, 0, 1)
-    text(f"{s0.score} {s3.score}", 20, 20)
+    text("%i %i" % (s0.score, s3.score), 20, 20)
     nofill()
     ellipse(350, 250, 350, 350, stroke=Color(0))
-    
-    manualControl()  # Ручне управління роботом
-    strategy_qlearning()  # Q-Learning стратегія для робота s3
-    score()  # Оцінка стану
-    simFriction()  # Імітація тертя
-    
-    space.step(0.02)  # Оновлення фізики
+    manualControl()
+    strategy2()
+    score()
+    simFriction()
+    space.step(0.02)
     space.debug_draw(draw_options)
 
-# Розмір полотна та запуск симуляції
 canvas.size = 700, 500
 canvas.run(draw)
